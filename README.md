@@ -28,7 +28,7 @@ Click a name under **People in week N** to open their feedback panel over the pa
 ![Peer Feedback list of seven colleagues with one open in a side panel showing a draft, a saved note and the log entries that mention them](docs/screenshots/peer-feedback.png)
 
 <details>
-<summary>More screenshots: Self-Reflection, Goals, Manager Feedback and login</summary>
+<summary>More screenshots: Self-Reflection, Goals, Manager Feedback, Managing and login</summary>
 
 **Self-Reflection**: a draft in four sections, each a list of what your log says. Pick a section to edit or rewrite it on its own.
 
@@ -41,6 +41,10 @@ Click a name under **People in week N** to open their feedback panel over the pa
 **Manager Feedback**: paste or upload your manager's feedback for each review period, and suggest goals from it.
 
 ![Manager Feedback page with a saved review period open and the button to suggest goals from it](docs/screenshots/manager-feedback.png)
+
+**Managing**: for people who report to you (turn it on in **Settings**). Log wins, things to improve, feedback you gave and what others said, filter by type, and draft or view a review summary.
+
+![Managing page with five reportees listed on the left and one open, showing the add-note box, filter chips with counts and their notes, newest first](docs/screenshots/managing.png)
 
 **Login**: sign in with the email and password you create in Supabase.
 
@@ -167,90 +171,6 @@ These buttons use Claude, and each click is a charge to your Anthropic account:
 | Self-Reflection | **Build draft** / **Build new draft** and **Rewrite** |
 | Peer Feedback | **Draft for all**, and in a colleague's panel **Draft feedback**, **Regenerate** and **Rewrite** |
 | Goals | **Suggest goals** |
-
-## Updating an existing copy
-
-Peer feedback drafts are no longer saved. Earlier versions saved them in the `drafts` table. To remove those, run this in the Supabase **SQL Editor**:
-
-```sql
-delete from drafts where type = 'peer_feedback';
-```
-
-If you set up your copy when the key was called `VITE_SUPABASE_ANON_KEY`, it keeps working: the app falls back to that name when `VITE_SUPABASE_PUBLISHABLE_KEY` isn't set.
-
-If you set up the database before Peer Feedback had saved notes, run this once in the Supabase **SQL Editor** to add the table they're stored in:
-
-```sql
-create table colleague_notes (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null default auth.uid() references auth.users on delete cascade,
-  colleague_id uuid not null references colleagues(id) on delete cascade,
-  content text not null,
-  created_at timestamptz default now()
-);
-create index colleague_notes_colleague_idx on colleague_notes (colleague_id);
-alter table colleague_notes enable row level security;
-create policy "own rows" on colleague_notes for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
-```
-
-Until you do, Peer Feedback shows "Couldn't load notes" in a colleague's panel.
-
-If you set up the database before the Managing tab, run this once in the Supabase **SQL Editor** to add the tables for your reportees and their notes:
-
-```sql
-create table reportees (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null default auth.uid() references auth.users on delete cascade,
-  name text not null,
-  role text,
-  joined_on date,
-  created_at timestamptz default now()
-);
-create table reportee_notes (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null default auth.uid() references auth.users on delete cascade,
-  reportee_id uuid not null references reportees(id) on delete cascade,
-  type text not null,
-  content text not null,
-  said_by text[] default '{}',
-  created_at timestamptz default now()
-);
-create index reportee_notes_reportee_idx on reportee_notes (reportee_id);
-alter table reportees enable row level security;
-alter table reportee_notes enable row level security;
-create policy "own rows" on reportees for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
-create policy "own rows" on reportee_notes for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
-```
-
-Until you do, Managing shows "Couldn't load your team".
-
-If you added those tables before reportees had a joining date, run this once to add it:
-
-```sql
-alter table reportees add column joined_on date;
-```
-
-Until you do, adding or editing a reportee fails.
-
-If you set up the database before review summaries were saved, run this once to add the table they're stored in:
-
-```sql
-create table review_summaries (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null default auth.uid() references auth.users on delete cascade,
-  reportee_id uuid not null references reportees(id) on delete cascade,
-  period_start date not null,
-  period_end date not null,
-  content text not null,
-  created_at timestamptz default now(),
-  updated_at timestamptz,
-  unique (reportee_id, period_start)
-);
-alter table review_summaries enable row level security;
-create policy "own rows" on review_summaries for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
-```
-
-Until you do, Managing shows "Couldn't load saved summaries", and new summaries are shown but not saved.
 
 ## Adding colleagues
 
