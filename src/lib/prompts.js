@@ -111,7 +111,7 @@ Format, plain text with exactly these parts:
 
 Merge repeats into one line. Leave out a part entirely when there are no notes of that type. No other headings, no markdown (no bold, no #), and no other text.`
 
-export function reviewSummaryPrompt(name, notes) {
+export function reviewSummaryPrompt(name, notes, period) {
   const notesText = notes.map(n => `- [${n.label}${n.said_by?.length ? `, from ${n.said_by.join(', ')}` : ''}] ${n.content}`).join('\n')
-  return `Write a review summary for ${name} from my notes about them:\n\n${notesText}`
+  return `Write a review summary for ${name} covering the review period ${period}, from my notes about them in that period:\n\n${notesText}`
 }

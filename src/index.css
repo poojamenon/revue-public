@@ -105,6 +105,11 @@ select option {
 .list-row:hover { background: #FAF8F4 !important; }
 .list-row[aria-expanded="true"]:hover { background: #F3E3E1 !important; }
 
+/* Popovers open right-aligned under their button; on phones the button sits on the left, so align left */
+@media (max-width: 640px) {
+  .popover { left: 0; right: auto !important; }
+}
+
 /* Login: put the form first on phones so it's visible without scrolling */
 @media (max-width: 900px) {
   .login-panel { order: 2; }

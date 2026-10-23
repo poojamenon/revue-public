@@ -19,6 +19,17 @@ export function reviewCycle(today = new Date()) {
   return m === 10 ? { start: iso(y, 4, 1), end: start } : { start: iso(y - 1, 10, 1), end: start }
 }
 
+// Review periods from the current one back to the one `fromIso` falls in, newest first.
+// Always includes the current and last finished periods.
+export function cyclesSince(fromIso, today = new Date()) {
+  const cycles = [currentCycle(today)]
+  const last = () => cycles[cycles.length - 1]
+  while (cycles.length < 2 || (fromIso && fromIso < last().start)) {
+    cycles.push(reviewCycle(new Date(last().start + 'T00:00:00')))
+  }
+  return cycles
+}
+
 // "Apr 1 – Oct 1, 2026" or "Oct 1, 2026 – Apr 1, 2027"
 export function formatCycle({ start, end }) {
   const a = new Date(start + 'T00:00:00'), b = new Date(end + 'T00:00:00')

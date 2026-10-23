@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { t, layout } from '../lib/theme'
 import { toIso, parseIso, formatDayMonth } from '../lib/weeks'
 import { canonicalizeNames } from '../lib/colleagues'
 import { callClaude } from '../lib/claude'
+import { reviewCycle, cyclesSince, formatCycle } from '../lib/cycles'
 import { REVIEW_SUMMARY_SYSTEM, reviewSummaryPrompt } from '../lib/prompts'
 
 const TYPES = {
@@ -23,6 +24,7 @@ const FILTERS = [
 const nameKey = n => n.trim().replace(/\s+/g, ' ').toLowerCase()
 const initials = name => name.trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase()
 const dayMonth = ts => formatDayMonth(toIso(new Date(ts)))
+const noteDay = n => toIso(new Date(n.created_at))
 const monthYear = date => date.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })
 
 export default function Managing({ userId }) {
@@ -44,7 +46,7 @@ export default function Managing({ userId }) {
   // The reportee form: { name, role, joined } to add someone, plus their id when editing them
   const [form, setForm] = useState(null)
   const adding = !!form && !form.id
-  // Review summaries aren't saved: they stay while the tab is open
+  // Review summaries aren't saved: they stay while the tab is open, as { [reportee id]: { text, period } }
   const [drafts, setDrafts] = useState({})
   const [drafting, setDrafting] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -84,6 +86,15 @@ export default function Managing({ userId }) {
     ...pastNames.map(name => ({ name, tag: 'Added by you' })),
     ...team.filter(r => !known.has(nameKey(r.name))).map(r => ({ name: r.name, tag: 'Your team' })),
   ]
+  // Review periods to summarise, back to the earliest note or joining date
+  const earliest = [...currentNotes.map(noteDay), current?.joined_on].filter(Boolean).sort()[0]
+  const thisPeriod = cyclesSince(earliest)[0].start
+  const periods = cyclesSince(earliest).map(c => ({
+    ...c,
+    inProgress: c.start === thisPeriod,
+    count: currentNotes.filter(n => noteDay(n) >= c.start && noteDay(n) < c.end).length,
+  }))
+
   // A name typed but not yet picked still counts
   const withPending = (names, pending) => canonicalizeNames(pending.trim() ? [...names, pending] : names, pool.map(p => p.name))
 
@@ -167,17 +178,18 @@ export default function Managing({ userId }) {
     if (editing?.id === id) setEditing(null)
   }
 
-  async function draftSummary() {
+  async function draftSummary(period) {
     const apiKey = localStorage.getItem('claude_api_key')
     if (!apiKey) { setError('Add your Claude API key in Settings first.'); return }
-    if (!currentNotes.length) { setError(`Add some notes about ${first} first.`); return }
+    const inPeriod = currentNotes.filter(n => noteDay(n) >= period.start && noteDay(n) < period.end)
+    if (!inPeriod.length) { setError(`No notes about ${first} in ${formatCycle(period)}.`); return }
     const person = current
     setError('')
     setDrafting(true)
     try {
-      const labelled = [...currentNotes].reverse().map(n => ({ ...n, label: TYPES[n.type]?.label || n.type }))
-      const draft = await callClaude(apiKey, REVIEW_SUMMARY_SYSTEM, reviewSummaryPrompt(person.name, labelled))
-      setDrafts(prev => ({ ...prev, [person.id]: draft }))
+      const labelled = [...inPeriod].reverse().map(n => ({ ...n, label: TYPES[n.type]?.label || n.type }))
+      const text = await callClaude(apiKey, REVIEW_SUMMARY_SYSTEM, reviewSummaryPrompt(person.name, labelled, formatCycle(period)))
+      setDrafts(prev => ({ ...prev, [person.id]: { text, period: { start: period.start, end: period.end } } }))
       setCopied(false)
     } catch (err) {
       setError(`Couldn't draft the summary: ${err.message}`)
@@ -187,7 +199,7 @@ export default function Managing({ userId }) {
   }
 
   function copyDraft() {
-    navigator.clipboard.writeText(drafts[current.id])
+    navigator.clipboard.writeText(drafts[current.id].text)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -269,10 +281,7 @@ export default function Managing({ userId }) {
                   </div>
                 </div>
                 <div style={s.personActions}>
-                  <button type="button" onClick={draftSummary} disabled={drafting} style={{ ...s.darkBtn, ...s.tallBtn, ...(drafting ? s.disabled : {}) }}>
-                    <Icon size={16} stroke={t.bright} d="M11 3l1.8 4.7 4.7 1.8-4.7 1.8L11 16l-1.8-4.7L4.5 9.5l4.7-1.8z" />
-                    {drafting ? 'Drafting…' : drafts[current.id] ? 'Redraft review summary' : 'Draft review summary'}
-                  </button>
+                  <SummaryMenu key={current.id} periods={periods} busy={drafting} hasDraft={!!drafts[current.id]} onDraft={draftSummary} />
                   <button type="button" className="icon-btn" onClick={() => setForm({ id: current.id, name: current.name, role: current.role || '', joined: current.joined_on || '' })}
                     aria-label={`Edit ${current.name}`} title="Edit" aria-expanded={form?.id === current.id} style={s.iconBtn}>
                     <Icon size={16} d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16zM13.5 6.5l4 4" />
@@ -288,10 +297,10 @@ export default function Managing({ userId }) {
               {drafts[current.id] && (
                 <div style={s.draftCard}>
                   <div style={s.draftHead}>
-                    <span style={s.draftEyebrow}>Review summary · not saved</span>
+                    <span style={s.draftEyebrow}>Review summary · {formatCycle(drafts[current.id].period)} · not saved</span>
                     <button type="button" onClick={copyDraft} style={s.brightBtn}>{copied ? 'Copied!' : 'Copy'}</button>
                   </div>
-                  <p style={s.draftText}>{drafts[current.id]}</p>
+                  <p style={s.draftText}>{drafts[current.id].text}</p>
                 </div>
               )}
 
@@ -398,6 +407,69 @@ export default function Managing({ userId }) {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// 'Draft review summary' and its popover for picking which review period to summarise
+function SummaryMenu({ periods, busy, hasDraft, onDraft }) {
+  const [open, setOpen] = useState(false)
+  // Defaults to the last finished period, the one a review is written about
+  const [picked, setPicked] = useState(() => reviewCycle().start)
+  const wrapRef = useRef(null)
+  const buttonRef = useRef(null)
+  const period = periods.find(p => p.start === picked) || periods[0]
+
+  useEffect(() => {
+    if (!open) return
+    wrapRef.current.querySelector('input[type="radio"]:checked')?.focus()
+    const onDown = e => { if (!wrapRef.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  function close() {
+    setOpen(false)
+    buttonRef.current.focus()
+  }
+
+  return (
+    <div ref={wrapRef} style={s.relative}>
+      <button ref={buttonRef} type="button" onClick={() => setOpen(v => !v)} disabled={busy} aria-haspopup="dialog" aria-expanded={open}
+        style={{ ...s.darkBtn, ...s.tallBtn, ...(busy ? s.disabled : {}) }}>
+        <Icon size={16} stroke={t.bright} d="M11 3l1.8 4.7 4.7 1.8-4.7 1.8L11 16l-1.8-4.7L4.5 9.5l4.7-1.8z" />
+        {busy ? 'Drafting…' : hasDraft ? 'Redraft review summary' : 'Draft review summary'}
+      </button>
+      {open && (
+        <div role="dialog" aria-labelledby="summary-period-h" className="popover" onKeyDown={e => e.key === 'Escape' && close()} style={s.popover}>
+          <div style={s.cardHeadText}>
+            <h3 id="summary-period-h" style={s.h3}>Which review period?</h3>
+            <span style={s.hint}>Only notes from this period go into the summary.</span>
+          </div>
+          <fieldset style={s.periodList}>
+            <legend style={s.srOnly}>Review period</legend>
+            {periods.map(p => {
+              const on = p.start === period.start
+              return (
+                <label key={p.start} style={{ ...s.periodOption, ...(on ? s.periodOptionOn : {}) }}>
+                  <input type="radio" name="summary-period" value={p.start} checked={on} onChange={() => setPicked(p.start)} style={s.radio} />
+                  <span style={s.personText}>
+                    <span style={s.periodName}>{formatCycle(p)}</span>
+                    <span style={s.personMeta}>{p.count} {p.count === 1 ? 'note' : 'notes'}{p.inProgress ? ' · in progress' : ''}</span>
+                  </span>
+                </label>
+              )
+            })}
+          </fieldset>
+          <div style={s.editActions}>
+            <button type="button" onClick={close} style={s.cancelBtn}>Cancel</button>
+            <button type="button" disabled={!period.count} onClick={() => { setOpen(false); onDraft(period) }}
+              style={{ ...s.darkBtn, ...(period.count ? {} : s.disabled) }}>
+              Draft summary
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -539,6 +611,13 @@ const s = {
   muted: { fontSize: 14, color: t.muted },
   personActions: { display: 'flex', flexWrap: 'wrap', gap: 8 },
 
+  popover: { position: 'absolute', top: 'calc(100% + 8px)', right: 0, zIndex: 20, width: 340, maxWidth: 'calc(100vw - 32px)', boxSizing: 'border-box', background: t.white, border: `1px solid ${t.border}`, borderRadius: 16, boxShadow: '0 16px 40px rgba(28, 27, 34, 0.16)', padding: 18, display: 'flex', flexDirection: 'column', gap: 14 },
+  cardHeadText: { display: 'flex', flexDirection: 'column', gap: 4 },
+  periodList: { margin: 0, padding: 0, border: 0, display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 280, overflowY: 'auto' },
+  periodOption: { display: 'flex', alignItems: 'center', gap: 12, minHeight: 44, padding: '10px 12px', borderRadius: 12, border: `1px solid ${t.border}`, cursor: 'pointer' },
+  periodOptionOn: { border: `2px solid ${t.accent}`, padding: '9px 11px', background: t.accentSoft },
+  periodName: { fontSize: 14, fontWeight: 600 },
+  radio: { flex: '0 0 auto', width: 18, height: 18, margin: 0, accentColor: t.accent },
   draftCard: { background: t.dark, color: t.white, borderRadius: 18, padding: 22, display: 'flex', flexDirection: 'column', gap: 12 },
   draftHead: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   draftEyebrow: { fontFamily: t.fontMono, fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase', color: t.bright },
