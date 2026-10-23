@@ -50,7 +50,7 @@ export default function Managing({ userId }) {
   const adding = !!form && !form.id
   // Saved review summaries for every reportee, one per review period
   const [summaries, setSummaries] = useState([])
-  // The summary open for each reportee, as { [reportee id]: summary id }; the most recently changed when not set
+  // The summary open for each reportee, as { [reportee id]: summary id }; none is shown until one is drafted or viewed
   const [openSummary, setOpenSummary] = useState({})
   // The open summary's text while it's being edited
   const [summaryEdit, setSummaryEdit] = useState(null)
@@ -85,7 +85,7 @@ export default function Managing({ userId }) {
   const listed = teamQuery ? reportees.filter(r => `${r.name} ${r.role || ''}`.toLowerCase().includes(teamQuery)) : reportees
   const changedAt = x => x.updated_at || x.created_at
   const theirSummaries = current ? summaries.filter(x => x.reportee_id === current.id).sort((a, b) => changedAt(b).localeCompare(changedAt(a))) : []
-  const shownSummary = theirSummaries.find(x => x.id === openSummary[current?.id]) || theirSummaries[0] || null
+  const shownSummary = theirSummaries.find(x => x.id === openSummary[current?.id]) || null
   const currentNotes = current ? notes.filter(n => n.reportee_id === current.id) : []
   const counts = { all: currentNotes.length, mine: 0, others: 0, win: 0, improve: 0 }
   currentNotes.forEach(n => { if (n.type in counts) counts[n.type]++ })
@@ -229,10 +229,15 @@ export default function Managing({ userId }) {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  function editSummary(summary) {
+  function viewSummary(summary) {
     setOpenSummary(prev => ({ ...prev, [current.id]: summary.id }))
-    setSummaryEdit(summary.content)
+    setSummaryEdit(null)
     setCopied(false)
+  }
+
+  function closeSummary() {
+    setOpenSummary(prev => ({ ...prev, [current.id]: null }))
+    setSummaryEdit(null)
   }
 
   async function saveSummary() {
@@ -348,7 +353,7 @@ export default function Managing({ userId }) {
                   </div>
                 </div>
                 <div style={s.personActions}>
-                  <SummaryMenu key={current.id} periods={periods} busy={drafting} onDraft={draftSummary} onEdit={editSummary} />
+                  <SummaryMenu key={current.id} periods={periods} busy={drafting} onDraft={draftSummary} onView={viewSummary} />
                   <button type="button" className="icon-btn" onClick={() => setForm({ id: current.id, name: current.name, role: current.role || '', joined: current.joined_on || '' })}
                     aria-label={`Edit ${current.name}`} title="Edit" aria-expanded={form?.id === current.id} style={s.iconBtn}>
                     <Icon size={16} d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16zM13.5 6.5l4 4" />
@@ -372,10 +377,13 @@ export default function Managing({ userId }) {
                     </div>
                     {summaryEdit === null && (
                       <div style={s.draftActions}>
-                        <button type="button" onClick={() => editSummary(shownSummary)} style={s.darkOutlineBtn}>Edit</button>
+                        <button type="button" onClick={() => setSummaryEdit(shownSummary.content)} style={s.darkOutlineBtn}>Edit</button>
                         <button type="button" onClick={copySummary} style={s.brightBtn}>{copied ? 'Copied!' : 'Copy'}</button>
                         <button type="button" onClick={deleteSummary} aria-label="Delete this summary" title="Delete" style={s.darkIconBtn}>
                           <Icon size={16} d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
+                        </button>
+                        <button type="button" onClick={closeSummary} aria-label="Close summary" title="Close" style={s.darkIconBtn}>
+                          <Icon size={16} d="M6 6l12 12M18 6L6 18" />
                         </button>
                       </div>
                     )}
@@ -504,8 +512,8 @@ export default function Managing({ userId }) {
   )
 }
 
-// 'Draft review summary' and its popover for picking which review period to summarise
-function SummaryMenu({ periods, busy, onDraft, onEdit }) {
+// 'View summary' and its popover for picking which review period to draft or view
+function SummaryMenu({ periods, busy, onDraft, onView }) {
   const [open, setOpen] = useState(false)
   // Defaults to the last finished period, the one a review is written about
   const [picked, setPicked] = useState(() => reviewCycle().start)
@@ -531,7 +539,7 @@ function SummaryMenu({ periods, busy, onDraft, onEdit }) {
       <button ref={buttonRef} type="button" onClick={() => setOpen(v => !v)} disabled={busy} aria-haspopup="dialog" aria-expanded={open}
         style={{ ...s.darkBtn, ...s.tallBtn, ...(busy ? s.disabled : {}) }}>
         <Icon size={16} stroke={t.bright} d="M11 3l1.8 4.7 4.7 1.8-4.7 1.8L11 16l-1.8-4.7L4.5 9.5l4.7-1.8z" />
-        {busy ? 'Drafting…' : 'Draft review summary'}
+        {busy ? 'Drafting…' : 'View summary'}
       </button>
       {open && (
         <div role="dialog" aria-labelledby="summary-period-h" className="popover" onKeyDown={e => e.key === 'Escape' && close()} style={s.popover}>
@@ -557,7 +565,7 @@ function SummaryMenu({ periods, busy, onDraft, onEdit }) {
           <div style={s.editActions}>
             <button type="button" onClick={close} style={s.cancelBtn}>Cancel</button>
             {period.summary ? (
-              <button type="button" onClick={() => { setOpen(false); onEdit(period.summary) }} style={s.darkBtn}>Edit summary</button>
+              <button type="button" onClick={() => { setOpen(false); onView(period.summary) }} style={s.darkBtn}>View summary</button>
             ) : (
               <button type="button" disabled={!period.count} onClick={() => { setOpen(false); onDraft(period) }}
                 style={{ ...s.darkBtn, ...(period.count ? {} : s.disabled) }}>
