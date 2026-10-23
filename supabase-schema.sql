@@ -92,6 +92,19 @@ create table reportee_notes (
 
 create index reportee_notes_reportee_idx on reportee_notes (reportee_id);
 
+-- Review summaries drafted from a reportee's notes: one per reportee per review period
+create table review_summaries (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users on delete cascade,
+  reportee_id uuid not null references reportees(id) on delete cascade,
+  period_start date not null,
+  period_end date not null,
+  content text not null,
+  created_at timestamptz default now(),
+  updated_at timestamptz,
+  unique (reportee_id, period_start)
+);
+
 -- Row-level security: each signed-in user can only reach their own rows
 alter table entries enable row level security;
 alter table colleagues enable row level security;
@@ -101,6 +114,7 @@ alter table goals enable row level security;
 alter table colleague_notes enable row level security;
 alter table reportees enable row level security;
 alter table reportee_notes enable row level security;
+alter table review_summaries enable row level security;
 
 create policy "own rows" on entries for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "own rows" on colleagues for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
@@ -110,3 +124,4 @@ create policy "own rows" on goals for all to authenticated using (auth.uid() = u
 create policy "own rows" on colleague_notes for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "own rows" on reportees for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "own rows" on reportee_notes for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "own rows" on review_summaries for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);

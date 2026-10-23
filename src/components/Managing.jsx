@@ -5,6 +5,7 @@ import { toIso, parseIso, formatDayMonth } from '../lib/weeks'
 import { canonicalizeNames } from '../lib/colleagues'
 import { callClaude } from '../lib/claude'
 import { currentCycle, reviewCycle, formatCycle } from '../lib/cycles'
+import { formatStamp } from '../lib/peerFeedback'
 import { REVIEW_SUMMARY_SYSTEM, reviewSummaryPrompt } from '../lib/prompts'
 
 const TYPES = {
@@ -47,8 +48,13 @@ export default function Managing({ userId }) {
   // The reportee form: { name, role, joined } to add someone, plus their id when editing them
   const [form, setForm] = useState(null)
   const adding = !!form && !form.id
-  // Review summaries aren't saved: they stay while the tab is open, as { [reportee id]: { text, period } }
-  const [drafts, setDrafts] = useState({})
+  // Saved review summaries for every reportee, one per review period
+  const [summaries, setSummaries] = useState([])
+  // The summary open for each reportee, as { [reportee id]: summary id }; the most recently changed when not set
+  const [openSummary, setOpenSummary] = useState({})
+  // The open summary's text while it's being edited
+  const [summaryEdit, setSummaryEdit] = useState(null)
+  const [savingSummary, setSavingSummary] = useState(false)
   const [drafting, setDrafting] = useState(false)
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState('')
@@ -59,13 +65,16 @@ export default function Managing({ userId }) {
       supabase.from('reportees').select('*').eq('user_id', userId).order('created_at'),
       supabase.from('reportee_notes').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
       supabase.from('colleagues').select('name').eq('user_id', userId).order('name'),
-    ]).then(([r, n, c]) => {
+      supabase.from('review_summaries').select('*').eq('user_id', userId),
+    ]).then(([r, n, c, rs]) => {
       if (!live) return
       const failed = r.error || n.error
       if (failed) setLoadError(`Couldn't load your team: ${failed.message}`)
+      else if (rs.error) setLoadError(`Couldn't load saved summaries: ${rs.error.message}`)
       setReportees(r.data || [])
       setNotes(n.data || [])
       setColleagueNames((c.data || []).map(x => x.name))
+      setSummaries(rs.data || [])
     })
     return () => { live = false }
   }, [userId])
@@ -74,6 +83,9 @@ export default function Managing({ userId }) {
   const first = current?.name.split(/\s+/)[0] || ''
   const teamQuery = teamSearch.trim().toLowerCase()
   const listed = teamQuery ? reportees.filter(r => `${r.name} ${r.role || ''}`.toLowerCase().includes(teamQuery)) : reportees
+  const changedAt = x => x.updated_at || x.created_at
+  const theirSummaries = current ? summaries.filter(x => x.reportee_id === current.id).sort((a, b) => changedAt(b).localeCompare(changedAt(a))) : []
+  const shownSummary = theirSummaries.find(x => x.id === openSummary[current?.id]) || theirSummaries[0] || null
   const currentNotes = current ? notes.filter(n => n.reportee_id === current.id) : []
   const counts = { all: currentNotes.length, mine: 0, others: 0, win: 0, improve: 0 }
   currentNotes.forEach(n => { if (n.type in counts) counts[n.type]++ })
@@ -89,12 +101,16 @@ export default function Managing({ userId }) {
     ...pastNames.map(name => ({ name, tag: 'Added by you' })),
     ...team.filter(r => !known.has(nameKey(r.name))).map(r => ({ name: r.name, tag: 'Your team' })),
   ]
-  // Review periods to summarise: the current one and the last finished one
-  const periods = [currentCycle(), reviewCycle()].map((c, i) => ({
-    ...c,
-    inProgress: i === 0,
-    count: currentNotes.filter(n => noteDay(n) >= c.start && noteDay(n) < c.end).length,
-  }))
+  // Review periods to summarise: the current one, the last finished one, and any older one with a saved summary
+  const periods = [currentCycle(), reviewCycle(), ...theirSummaries.map(x => ({ start: x.period_start, end: x.period_end }))]
+    .filter((c, i, all) => all.findIndex(o => o.start === c.start) === i)
+    .sort((a, b) => b.start.localeCompare(a.start))
+    .map(c => ({
+      ...c,
+      inProgress: c.start === currentCycle().start,
+      count: currentNotes.filter(n => noteDay(n) >= c.start && noteDay(n) < c.end).length,
+      summary: theirSummaries.find(x => x.period_start === c.start) || null,
+    }))
 
   // A name typed but not yet picked still counts
   const withPending = (names, pending) => canonicalizeNames(pending.trim() ? [...names, pending] : names, pool.map(p => p.name))
@@ -108,6 +124,7 @@ export default function Managing({ userId }) {
     setEditing(null)
     setForm(f => f?.id ? null : f)
     setCopied(false)
+    setSummaryEdit(null)
     setError('')
   }
 
@@ -190,7 +207,14 @@ export default function Managing({ userId }) {
     try {
       const labelled = [...inPeriod].reverse().map(n => ({ ...n, label: TYPES[n.type]?.label || n.type }))
       const text = await callClaude(apiKey, REVIEW_SUMMARY_SYSTEM, reviewSummaryPrompt(person.name, labelled, formatCycle(period)))
-      setDrafts(prev => ({ ...prev, [person.id]: { text, period: { start: period.start, end: period.end } } }))
+      const row = { user_id: userId, reportee_id: person.id, period_start: period.start, period_end: period.end, content: text }
+      const { data, error: saveError } = await supabase.from('review_summaries').insert(row).select().single()
+      // If saving fails, keep the summary on screen for this visit so it isn't lost
+      const summary = data || { ...row, id: `unsaved-${person.id}-${period.start}`, created_at: new Date().toISOString(), unsaved: true }
+      if (saveError) setError(`Drafted, but couldn't save the summary: ${saveError.message}. Copy it before you leave.`)
+      setSummaries(prev => [...prev, summary])
+      setOpenSummary(prev => ({ ...prev, [person.id]: summary.id }))
+      setSummaryEdit(null)
       setCopied(false)
     } catch (err) {
       setError(`Couldn't draft the summary: ${err.message}`)
@@ -199,10 +223,45 @@ export default function Managing({ userId }) {
     }
   }
 
-  function copyDraft() {
-    navigator.clipboard.writeText(drafts[current.id].text)
+  function copySummary() {
+    navigator.clipboard.writeText(shownSummary.content)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
+  }
+
+  function editSummary(summary) {
+    setOpenSummary(prev => ({ ...prev, [current.id]: summary.id }))
+    setSummaryEdit(summary.content)
+    setCopied(false)
+  }
+
+  async function saveSummary() {
+    const content = summaryEdit.trim()
+    if (!content || savingSummary) return
+    setError('')
+    if (shownSummary.unsaved) {
+      setSummaries(prev => prev.map(x => x.id === shownSummary.id ? { ...x, content } : x))
+      setSummaryEdit(null)
+      return
+    }
+    setSavingSummary(true)
+    const { data, error: saveError } = await supabase.from('review_summaries')
+      .update({ content, updated_at: new Date().toISOString() }).eq('id', shownSummary.id).select().single()
+    setSavingSummary(false)
+    if (saveError) { setError(`Couldn't save the summary: ${saveError.message}`); return }
+    setSummaries(prev => prev.map(x => x.id === data.id ? data : x))
+    setSummaryEdit(null)
+  }
+
+  async function deleteSummary() {
+    if (!confirm(`Delete ${first}'s review summary for ${formatCycle({ start: shownSummary.period_start, end: shownSummary.period_end })}?`)) return
+    if (!shownSummary.unsaved) {
+      const { error: delError } = await supabase.from('review_summaries').delete().eq('id', shownSummary.id)
+      if (delError) { setError(`Couldn't delete the summary: ${delError.message}`); return }
+    }
+    setSummaries(prev => prev.filter(x => x.id !== shownSummary.id))
+    setSummaryEdit(null)
+    setCopied(false)
   }
 
   const reporteeForm = form && (
@@ -289,7 +348,7 @@ export default function Managing({ userId }) {
                   </div>
                 </div>
                 <div style={s.personActions}>
-                  <SummaryMenu key={current.id} periods={periods} busy={drafting} hasDraft={!!drafts[current.id]} onDraft={draftSummary} />
+                  <SummaryMenu key={current.id} periods={periods} busy={drafting} onDraft={draftSummary} onEdit={editSummary} />
                   <button type="button" className="icon-btn" onClick={() => setForm({ id: current.id, name: current.name, role: current.role || '', joined: current.joined_on || '' })}
                     aria-label={`Edit ${current.name}`} title="Edit" aria-expanded={form?.id === current.id} style={s.iconBtn}>
                     <Icon size={16} d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16zM13.5 6.5l4 4" />
@@ -302,14 +361,40 @@ export default function Managing({ userId }) {
 
               {error && <p role="alert" style={s.error}>{error}</p>}
 
-              {drafts[current.id] && (
-                <div style={s.draftCard}>
+              {shownSummary && (
+                <section aria-labelledby="summary-h" style={s.draftCard}>
                   <div style={s.draftHead}>
-                    <span style={s.draftEyebrow}>Review summary · {formatCycle(drafts[current.id].period)} · not saved</span>
-                    <button type="button" onClick={copyDraft} style={s.brightBtn}>{copied ? 'Copied!' : 'Copy'}</button>
+                    <div style={s.cardHeadText}>
+                      <h3 id="summary-h" style={s.draftEyebrow}>Review summary · {formatCycle({ start: shownSummary.period_start, end: shownSummary.period_end })}</h3>
+                      <span style={s.draftMeta}>
+                        {shownSummary.unsaved ? 'Not saved' : shownSummary.updated_at ? `Edited ${formatStamp(shownSummary.updated_at)}` : `Saved ${formatStamp(shownSummary.created_at)}`}
+                      </span>
+                    </div>
+                    {summaryEdit === null && (
+                      <div style={s.draftActions}>
+                        <button type="button" onClick={() => editSummary(shownSummary)} style={s.darkOutlineBtn}>Edit</button>
+                        <button type="button" onClick={copySummary} style={s.brightBtn}>{copied ? 'Copied!' : 'Copy'}</button>
+                        <button type="button" onClick={deleteSummary} aria-label="Delete this summary" title="Delete" style={s.darkIconBtn}>
+                          <Icon size={16} d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
+                        </button>
+                      </div>
+                    )}
                   </div>
-                  <p style={s.draftText}>{drafts[current.id].text}</p>
-                </div>
+                  {summaryEdit === null ? <p style={s.draftText}>{shownSummary.content}</p> : (
+                    <>
+                      <label htmlFor="summary-edit" style={s.srOnly}>Summary</label>
+                      <textarea id="summary-edit" rows={12} autoFocus value={summaryEdit} onChange={e => setSummaryEdit(e.target.value)}
+                        onKeyDown={e => e.key === 'Escape' && setSummaryEdit(null)} style={s.summaryTextarea} />
+                      <div style={s.editActions}>
+                        <button type="button" onClick={() => setSummaryEdit(null)} style={s.darkOutlineBtn}>Cancel</button>
+                        <button type="button" onClick={saveSummary} disabled={!summaryEdit.trim() || savingSummary}
+                          style={{ ...s.brightBtn, ...(!summaryEdit.trim() || savingSummary ? s.disabled : {}) }}>
+                          {savingSummary ? 'Saving…' : 'Save summary'}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </section>
               )}
 
               <div style={s.composer}>
@@ -420,7 +505,7 @@ export default function Managing({ userId }) {
 }
 
 // 'Draft review summary' and its popover for picking which review period to summarise
-function SummaryMenu({ periods, busy, hasDraft, onDraft }) {
+function SummaryMenu({ periods, busy, onDraft, onEdit }) {
   const [open, setOpen] = useState(false)
   // Defaults to the last finished period, the one a review is written about
   const [picked, setPicked] = useState(() => reviewCycle().start)
@@ -446,7 +531,7 @@ function SummaryMenu({ periods, busy, hasDraft, onDraft }) {
       <button ref={buttonRef} type="button" onClick={() => setOpen(v => !v)} disabled={busy} aria-haspopup="dialog" aria-expanded={open}
         style={{ ...s.darkBtn, ...s.tallBtn, ...(busy ? s.disabled : {}) }}>
         <Icon size={16} stroke={t.bright} d="M11 3l1.8 4.7 4.7 1.8-4.7 1.8L11 16l-1.8-4.7L4.5 9.5l4.7-1.8z" />
-        {busy ? 'Drafting…' : hasDraft ? 'Redraft review summary' : 'Draft review summary'}
+        {busy ? 'Drafting…' : 'Draft review summary'}
       </button>
       {open && (
         <div role="dialog" aria-labelledby="summary-period-h" className="popover" onKeyDown={e => e.key === 'Escape' && close()} style={s.popover}>
@@ -463,7 +548,7 @@ function SummaryMenu({ periods, busy, hasDraft, onDraft }) {
                   <input type="radio" name="summary-period" value={p.start} checked={on} onChange={() => setPicked(p.start)} style={s.radio} />
                   <span style={s.personText}>
                     <span style={s.periodName}>{formatCycle(p)}</span>
-                    <span style={s.personMeta}>{p.count} {p.count === 1 ? 'note' : 'notes'}{p.inProgress ? ' · in progress' : ''}</span>
+                    <span style={s.personMeta}>{p.count} {p.count === 1 ? 'note' : 'notes'}{p.inProgress ? ' · in progress' : ''}{p.summary ? ' · summary saved' : ''}</span>
                   </span>
                 </label>
               )
@@ -471,10 +556,14 @@ function SummaryMenu({ periods, busy, hasDraft, onDraft }) {
           </fieldset>
           <div style={s.editActions}>
             <button type="button" onClick={close} style={s.cancelBtn}>Cancel</button>
-            <button type="button" disabled={!period.count} onClick={() => { setOpen(false); onDraft(period) }}
-              style={{ ...s.darkBtn, ...(period.count ? {} : s.disabled) }}>
-              Draft summary
-            </button>
+            {period.summary ? (
+              <button type="button" onClick={() => { setOpen(false); onEdit(period.summary) }} style={s.darkBtn}>Edit summary</button>
+            ) : (
+              <button type="button" disabled={!period.count} onClick={() => { setOpen(false); onDraft(period) }}
+                style={{ ...s.darkBtn, ...(period.count ? {} : s.disabled) }}>
+                Draft summary
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -632,7 +721,12 @@ const s = {
   radio: { flex: '0 0 auto', width: 18, height: 18, margin: 0, accentColor: t.accent },
   draftCard: { background: t.dark, color: t.white, borderRadius: 18, padding: 22, display: 'flex', flexDirection: 'column', gap: 12 },
   draftHead: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
-  draftEyebrow: { fontFamily: t.fontMono, fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase', color: t.bright },
+  draftMeta: { fontSize: 13, color: t.onDarkMuted },
+  draftActions: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+  darkOutlineBtn: { ...btn, height: 36, padding: '0 14px', border: `1px solid ${t.darkBorder}`, background: 'transparent', color: t.onDark },
+  darkIconBtn: { width: 36, height: 36, borderRadius: 10, border: `1px solid ${t.darkBorder}`, background: 'transparent', color: t.onDark, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 },
+  summaryTextarea: { boxSizing: 'border-box', width: '100%', resize: 'vertical', border: `1px solid ${t.border}`, borderRadius: 12, background: t.field, color: t.text, padding: '12px 14px', fontSize: 15, lineHeight: 1.6 },
+  draftEyebrow: { margin: 0, fontWeight: 500, fontFamily: t.fontMono, fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase', color: t.bright },
   draftText: { margin: 0, fontSize: 15, lineHeight: 1.6, color: t.onDark, whiteSpace: 'pre-wrap' },
 
   listHead: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
