@@ -8,6 +8,7 @@ import SelfReflection from './components/SelfReflection'
 import PeerFeedback from './components/PeerFeedback'
 import Goals from './components/Goals'
 import ManagerFeedback from './components/ManagerFeedback'
+import Managing from './components/Managing'
 import Settings from './components/Settings'
 
 const NAV = [
@@ -17,6 +18,7 @@ const NAV = [
   { key: 'goals', label: 'Goals', icon: <><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1" /></> },
   { key: 'feedback', label: 'Manager Feedback', icon: <path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /> },
 ]
+const MANAGING = { key: 'managing', label: 'Managing', icon: <><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4V3h6v1" /><circle cx="12" cy="10.5" r="2.5" /><path d="M8 17a4 4 0 0 1 8 0" /></> }
 const SETTINGS_ICON = <><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1" /><circle cx="15" cy="6" r="2" /><circle cx="9" cy="12" r="2" /><circle cx="17" cy="18" r="2" /></>
 
 export default function App() {
@@ -25,6 +27,7 @@ export default function App() {
   const [tab, setTab] = useState('log')
   // Feedback to preselect when Manager Feedback's 'Suggest goals' opens Goals
   const [goalsFeedbackId, setGoalsFeedbackId] = useState(null)
+  const [hideManaging, setHideManaging] = useState(() => localStorage.getItem('hide_managing_tab') === 'true')
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session))
@@ -46,11 +49,23 @@ export default function App() {
   const email = session.user.email || ''
   const go = key => { setTab(key); setGoalsFeedbackId(null) }
 
+  function toggleManaging(hide) {
+    if (hide) localStorage.setItem('hide_managing_tab', 'true')
+    else localStorage.removeItem('hide_managing_tab')
+    setHideManaging(hide)
+  }
+
   return (
     <div className="app-shell">
       <nav aria-label="Primary" className="app-rail" style={s.rail}>
         <div className="rail-logo" style={s.logo} aria-hidden="true">R</div>
         {NAV.map(n => <RailItem key={n.key} item={n} active={tab === n.key} onClick={() => go(n.key)} />)}
+        {!hideManaging && (
+          <>
+            <span aria-hidden="true" className="rail-divider" style={s.divider} />
+            <RailItem item={MANAGING} active={tab === 'managing'} onClick={() => go('managing')} />
+          </>
+        )}
         <div style={{ flexGrow: 1 }} />
         <RailItem item={{ label: 'Settings', icon: SETTINGS_ICON }} active={tab === 'settings'} onClick={() => go('settings')} />
       </nav>
@@ -61,7 +76,8 @@ export default function App() {
         {tab === 'peers'      && <PeerFeedback userId={userId} />}
         {tab === 'goals'      && <Goals key={goalsFeedbackId || 'goals'} userId={userId} initialFeedbackId={goalsFeedbackId} />}
         {tab === 'feedback'   && <ManagerFeedback userId={userId} onSuggestGoals={id => { setGoalsFeedbackId(id); setTab('goals') }} />}
-        {tab === 'settings'   && <Settings email={email} onLogout={handleLogout} />}
+        {tab === 'managing'   && !hideManaging && <Managing userId={userId} />}
+        {tab === 'settings'   && <Settings email={email} onLogout={handleLogout} hideManaging={hideManaging} onHideManagingChange={toggleManaging} />}
       </main>
     </div>
   )
@@ -80,5 +96,6 @@ const s = {
   rail: { boxSizing: 'border-box', background: t.dark, padding: '20px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 },
   logo: { flex: '0 0 auto', width: 36, height: 36, borderRadius: 10, background: t.bright, color: t.dark, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontFamily: t.fontSans, marginBottom: 16 },
   railItem: { flex: '0 0 auto', width: 44, height: 44, borderRadius: 12, border: 0, background: 'transparent', color: t.onDarkMuted, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 },
+  divider: { flex: '0 0 auto', width: 28, height: 1, background: t.darkBorder, margin: '4px 0' },
   railItemActive: { background: t.darkActive, color: t.bright },
 }

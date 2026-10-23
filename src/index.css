@@ -59,6 +59,7 @@ select option {
   .app-shell { flex-direction: column; }
   .app-rail { position: sticky; z-index: 10; height: auto; flex-basis: auto; flex-direction: row !important; padding: 10px 12px !important; overflow-x: auto; }
   .app-rail .rail-logo { margin: 0 8px 0 0 !important; }
+  .app-rail .rail-divider { width: 1px !important; height: 28px !important; margin: 0 4px !important; }
 }
 
 /* Hover states that inline styles can't express */
@@ -67,6 +68,10 @@ select option {
 .icon-btn:hover { background: #F7F5F0; color: #1C1B22; }
 .chip-btn:hover { border-color: #B5AE9F; }
 .person-btn:hover { text-decoration: underline; }
+/* Managing's "Who said it?" box: the box shows focus, not the input inside it */
+.tag-box:focus-within { outline: 2px solid #A8463F; outline-offset: -1px; background: #ffffff !important; }
+.tag-box .tag-input:focus { outline: none; background: transparent !important; }
+.person-row[aria-pressed="false"]:hover { border-color: #B5AE9F !important; }
 
 /* Person drawer (Weekly Log) and side panel (Peer feedback): slide in from the right, and back out on close */
 @keyframes drawer-in { from { transform: translateX(100%); } to { transform: translateX(0); } }

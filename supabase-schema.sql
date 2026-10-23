@@ -68,6 +68,28 @@ create table colleague_notes (
 
 create index colleague_notes_colleague_idx on colleague_notes (colleague_id);
 
+-- People who report to you (Managing), and the notes you keep about each of them
+create table reportees (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users on delete cascade,
+  name text not null,
+  role text,
+  created_at timestamptz default now()
+);
+
+-- type is 'mine' (feedback you gave), 'others' (said by the people in said_by), 'win' or 'improve'
+create table reportee_notes (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users on delete cascade,
+  reportee_id uuid not null references reportees(id) on delete cascade,
+  type text not null,
+  content text not null,
+  said_by text[] default '{}',
+  created_at timestamptz default now()
+);
+
+create index reportee_notes_reportee_idx on reportee_notes (reportee_id);
+
 -- Row-level security: each signed-in user can only reach their own rows
 alter table entries enable row level security;
 alter table colleagues enable row level security;
@@ -75,6 +97,8 @@ alter table drafts enable row level security;
 alter table manager_feedback enable row level security;
 alter table goals enable row level security;
 alter table colleague_notes enable row level security;
+alter table reportees enable row level security;
+alter table reportee_notes enable row level security;
 
 create policy "own rows" on entries for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "own rows" on colleagues for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
@@ -82,3 +106,5 @@ create policy "own rows" on drafts for all to authenticated using (auth.uid() = 
 create policy "own rows" on manager_feedback for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "own rows" on goals for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "own rows" on colleague_notes for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "own rows" on reportees for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "own rows" on reportee_notes for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
