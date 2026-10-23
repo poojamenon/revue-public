@@ -312,21 +312,6 @@ export default function Managing({ userId }) {
                 </div>
               )}
 
-              <div role="tablist" aria-label="Filter notes" style={s.filters}>
-                {FILTERS.map(f => {
-                  const on = f.key === filter
-                  return (
-                    <button key={f.key} type="button" role="tab" aria-selected={on} className="tile-btn" onClick={() => setFilter(f.key)}
-                      style={{ ...s.filter, ...(on ? s.filterOn : {}) }}>
-                      <span style={{ ...s.filterLabel, ...(on ? { color: t.onDarkMuted } : {}) }}>
-                        <span aria-hidden="true" style={{ ...s.dot, background: f.dot }} />{f.label}
-                      </span>
-                      <span style={s.filterCount}>{counts[f.key]}</span>
-                    </button>
-                  )
-                })}
-              </div>
-
               <div style={s.composer}>
                 <div style={s.composerHead}>
                   <h3 style={s.h3}>Add to {first}'s log</h3>
@@ -347,7 +332,22 @@ export default function Managing({ userId }) {
               </div>
 
               <div style={s.list}>
-                <h3 style={s.listTitle}>{filter === 'all' ? 'Log' : filterLabel} · newest first</h3>
+                <div style={s.listHead}>
+                  <h3 style={s.listTitle}>{filter === 'all' ? 'Log' : filterLabel} · newest first</h3>
+                  <div role="group" aria-label="Filter notes" style={s.chips}>
+                    {FILTERS.map(f => {
+                      const on = f.key === filter
+                      return (
+                        <button key={f.key} type="button" className="chip-btn" aria-pressed={on} onClick={() => setFilter(f.key)}
+                          style={{ ...s.chip, ...(on ? s.chipOn : {}) }}>
+                          <span aria-hidden="true" style={{ ...s.dot, background: f.dot }} />
+                          {f.label}
+                          <span style={{ ...s.chipCount, ...(on ? s.chipCountOn : {}) }}>{counts[f.key]}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
                 {shown.length ? shown.map(n => {
                   const type = TYPES[n.type] || TYPES.mine
                   if (editing?.id === n.id) {
@@ -635,12 +635,13 @@ const s = {
   draftEyebrow: { fontFamily: t.fontMono, fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase', color: t.bright },
   draftText: { margin: 0, fontSize: 15, lineHeight: 1.6, color: t.onDark, whiteSpace: 'pre-wrap' },
 
-  filters: { display: 'grid', gridTemplateColumns: 'repeat(5, minmax(120px, 1fr))', gap: 10, overflowX: 'auto', paddingBottom: 2 },
-  filter: { textAlign: 'left', padding: 14, borderRadius: 14, border: `1px solid ${t.border}`, background: t.white, color: t.text, display: 'flex', flexDirection: 'column', gap: 6 },
-  filterOn: { border: `1px solid ${t.dark}`, background: t.dark, color: t.white },
-  filterLabel: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: t.muted },
-  dot: { width: 8, height: 8, borderRadius: '50%' },
-  filterCount: { fontFamily: t.fontDisplay, fontSize: 26, fontWeight: 600, lineHeight: 1 },
+  listHead: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  chips: { display: 'flex', flexWrap: 'wrap', gap: 6 },
+  chip: { display: 'inline-flex', alignItems: 'center', gap: 6, height: 34, padding: '0 6px 0 12px', borderRadius: 999, border: `1px solid ${t.border}`, background: t.white, color: t.secondary, fontSize: 13, fontWeight: 600 },
+  chipOn: { border: `1px solid ${t.dark}`, background: t.dark, color: t.white },
+  chipCount: { minWidth: 22, height: 22, padding: '0 6px', boxSizing: 'border-box', borderRadius: 999, background: t.avatar, color: t.text, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 },
+  chipCountOn: { background: t.darkActive, color: t.white },
+  dot: { flex: '0 0 auto', width: 8, height: 8, borderRadius: '50%' },
 
   composer: { background: t.white, border: `1px solid ${t.border}`, borderRadius: 18, padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 14 },
   composerHead: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
