@@ -6,6 +6,7 @@ Revue is a personal companion for performance reviews. Log what you did each wee
 - **Self-Reflection**: drafts your self-reflection as a factual summary of your entries, sorted into four sections: the projects you worked on, who you worked with, what contributed to your growth, and what you did for the design team. Goals and manager feedback are used only to sort entries. The draft doesn't add opinions or praise your log doesn't contain. Rewrite any section on its own, with optional instructions; edits save automatically, past drafts can be reopened from the header, and you can copy or export a draft as Markdown.
 - **Peer Feedback**: one row per colleague you've tagged. Open someone to see the log entries that mention them, add notes (each saved with the date and time you added it, and used in their draft and the CSV), and draft, regenerate or rewrite their feedback. Drafts list what you worked on together, then summarise your notes and comments about them, using only what you wrote. Drafts aren't saved: they stay while the tab is open and are gone when you reload or sign out, so copy or export them first. Draft for everyone at once, rank colleagues by how often they appear in your log, and export everything as CSV.
 - **Manager Feedback**: paste your manager's feedback or drop in a PDF.
+- **Managing**: for people who report to you. Add your reportees, then log notes about each one as wins, things to improve, feedback you gave them, or things others said (tag who said it). Filter a person's notes by type and draft a factual review summary from them. Summaries aren't saved, so copy them first. Don't manage anyone? Turn on **Hide Managing tab** in **Settings**.
 - **Goals**: suggest goals from manager feedback (you review them before they're added), or add your own, and track them as active, achieved or carried over. Each active goal shows which of the last five weeks you logged work against it.
 
 Review periods run April 1 – October 1 and October 1 – April 1. The Weekly Log and Goals pages show the review period you're in, and the drafting pages default to the last finished one.
@@ -193,6 +194,34 @@ create policy "own rows" on colleague_notes for all to authenticated using (auth
 ```
 
 Until you do, Peer Feedback shows "Couldn't load notes" in a colleague's panel.
+
+If you set up the database before the Managing tab, run this once in the Supabase **SQL Editor** to add the tables for your reportees and their notes:
+
+```sql
+create table reportees (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users on delete cascade,
+  name text not null,
+  role text,
+  created_at timestamptz default now()
+);
+create table reportee_notes (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users on delete cascade,
+  reportee_id uuid not null references reportees(id) on delete cascade,
+  type text not null,
+  content text not null,
+  said_by text[] default '{}',
+  created_at timestamptz default now()
+);
+create index reportee_notes_reportee_idx on reportee_notes (reportee_id);
+alter table reportees enable row level security;
+alter table reportee_notes enable row level security;
+create policy "own rows" on reportees for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "own rows" on reportee_notes for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+```
+
+Until you do, Managing shows "Couldn't load your team".
 
 ## Adding colleagues
 

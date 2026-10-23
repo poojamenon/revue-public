@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { t, layout } from '../lib/theme'
 
-export default function Settings({ email, onLogout }) {
+export default function Settings({ email, onLogout, hideManaging, onHideManagingChange }) {
   const [apiKey, setApiKey] = useState(localStorage.getItem('claude_api_key') || '')
   const [hasKey, setHasKey] = useState(!!localStorage.getItem('claude_api_key'))
   const [showKey, setShowKey] = useState(false)
@@ -34,6 +34,7 @@ export default function Settings({ email, onLogout }) {
         </header>
 
         <div style={s.columns}>
+          <div style={s.mainCol}>
           <section aria-labelledby="key-h" className="page-card" style={s.card}>
             <div style={s.cardHead}>
               <div style={s.cardHeadText}>
@@ -64,6 +65,20 @@ export default function Settings({ email, onLogout }) {
               {hasKey && <button type="button" onClick={removeApiKey} style={s.removeBtn}>Remove key</button>}
             </div>
           </section>
+
+          <section aria-labelledby="tabs-h" className="page-card" style={s.card}>
+            <div style={s.toggleRow}>
+              <div style={s.cardHeadText}>
+                <h2 id="tabs-h" style={s.h2}>Hide Managing tab</h2>
+                <p style={s.muted}>For when you don't manage anyone. Your team and notes stay saved.</p>
+              </div>
+              <button type="button" role="switch" aria-checked={hideManaging} aria-labelledby="tabs-h" onClick={() => onHideManagingChange(!hideManaging)}
+                style={{ ...s.switch, ...(hideManaging ? s.switchOn : {}) }}>
+                <span aria-hidden="true" style={{ ...s.knob, ...(hideManaging ? s.knobOn : {}) }} />
+              </button>
+            </div>
+          </section>
+          </div>
 
           <aside style={s.aside}>
             <div style={s.darkCard}>
@@ -103,9 +118,15 @@ const s = {
   ...layout,
   inner: { ...layout.inner, gap: 24 },
   columns: { display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: 24, maxWidth: 1100 },
-  card: { flex: '999 1 460px', minWidth: 0, background: t.white, border: `1px solid ${t.border}`, borderRadius: 18, padding: 28, display: 'flex', flexDirection: 'column', gap: 18 },
+  mainCol: { flex: '999 1 460px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 24 },
+  card: { background: t.white, border: `1px solid ${t.border}`, borderRadius: 18, padding: 28, display: 'flex', flexDirection: 'column', gap: 18 },
   cardHead: { display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
   cardHeadText: { display: 'flex', flexDirection: 'column', gap: 4 },
+  toggleRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 },
+  switch: { flex: '0 0 auto', position: 'relative', width: 52, height: 32, borderRadius: 999, border: 0, padding: 0, background: t.borderStrong, transition: 'background 0.15s' },
+  switchOn: { background: t.accent },
+  knob: { position: 'absolute', top: 4, left: 4, width: 24, height: 24, borderRadius: '50%', background: t.white, boxShadow: '0 1px 2px rgba(28, 27, 34, 0.2)', transition: 'transform 0.15s' },
+  knobOn: { transform: 'translateX(20px)' },
   h2: { margin: 0, fontFamily: t.fontDisplay, fontSize: 20, fontWeight: 600 },
   muted: { margin: 0, fontSize: 14, color: t.muted },
   badge: { display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, padding: '0 10px', borderRadius: 999, background: t.accentSoft, color: t.accentInk, fontSize: 13, fontWeight: 600 },

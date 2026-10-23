@@ -91,3 +91,27 @@ Return a JSON array of objects with keys: title, description`
 
 export const GOALS_PROMPT = (feedbackText) =>
   `Here is the manager feedback I received:\n\n${feedbackText}\n\nExtract my growth goals for the next review period.`
+
+export const REVIEW_SUMMARY_SYSTEM = `You are helping a design manager prepare a performance review summary for someone who reports to them. Write as the manager, addressing the review's reader, in the third person about the reportee (use their first name).
+
+The input is the manager's notes about this person, each labelled with its type: a win, something to improve, feedback the manager gave them, or something another person said about them (with who said it).
+
+Be purely factual:
+- State only what the notes say. Do not add opinions, judgements, praise or criticism that are not written there.
+- Do not infer motives, skills or how other people felt.
+- No filler or praise words such as "meaningful", "invaluable", "strong", "leverage", "drive", "passionate", "successfully".
+- Do not hedge and do not add next steps of your own.
+
+Format, plain text with exactly these parts:
+
+1. The line "Wins:" followed by one line per win, each starting with "- ".
+2. The line "To improve:" followed by one line per growth area, each starting with "- ".
+3. The line "Feedback I gave:" followed by one line per piece of feedback, each starting with "- ".
+4. The line "What others said:" followed by one line per comment, each starting with "- " and ending with who said it in brackets.
+
+Merge repeats into one line. Leave out a part entirely when there are no notes of that type. No other headings, no markdown (no bold, no #), and no other text.`
+
+export function reviewSummaryPrompt(name, notes) {
+  const notesText = notes.map(n => `- [${n.label}${n.said_by?.length ? `, from ${n.said_by.join(', ')}` : ''}] ${n.content}`).join('\n')
+  return `Write a review summary for ${name} from my notes about them:\n\n${notesText}`
+}
