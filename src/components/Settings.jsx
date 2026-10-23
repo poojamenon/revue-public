@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { t, layout } from '../lib/theme'
 
-export default function Settings({ email, onLogout, hideManaging, onHideManagingChange }) {
+export default function Settings({ email, onLogout, showManaging, onShowManagingChange }) {
   const [apiKey, setApiKey] = useState(localStorage.getItem('claude_api_key') || '')
   const [hasKey, setHasKey] = useState(!!localStorage.getItem('claude_api_key'))
   const [showKey, setShowKey] = useState(false)
@@ -69,12 +69,12 @@ export default function Settings({ email, onLogout, hideManaging, onHideManaging
           <section aria-labelledby="tabs-h" className="page-card" style={s.card}>
             <div style={s.toggleRow}>
               <div style={s.cardHeadText}>
-                <h2 id="tabs-h" style={s.h2}>Hide Managing tab</h2>
-                <p style={s.muted}>For when you don't manage anyone. Your team and notes stay saved.</p>
+                <h2 id="tabs-h" style={s.h2}>Show Managing tab</h2>
+                <p style={s.muted}>Keep notes on the people who report to you. Turning it off keeps your team and notes saved.</p>
               </div>
-              <button type="button" role="switch" aria-checked={hideManaging} aria-labelledby="tabs-h" onClick={() => onHideManagingChange(!hideManaging)}
-                style={{ ...s.switch, ...(hideManaging ? s.switchOn : {}) }}>
-                <span aria-hidden="true" style={{ ...s.knob, ...(hideManaging ? s.knobOn : {}) }} />
+              <button type="button" role="switch" aria-checked={showManaging} aria-labelledby="tabs-h" onClick={() => onShowManagingChange(!showManaging)}
+                style={{ ...s.switch, ...(showManaging ? s.switchOn : {}) }}>
+                <span aria-hidden="true" style={{ ...s.knob, ...(showManaging ? s.knobOn : {}) }} />
               </button>
             </div>
           </section>

@@ -27,7 +27,8 @@ export default function App() {
   const [tab, setTab] = useState('log')
   // Feedback to preselect when Manager Feedback's 'Suggest goals' opens Goals
   const [goalsFeedbackId, setGoalsFeedbackId] = useState(null)
-  const [hideManaging, setHideManaging] = useState(() => localStorage.getItem('hide_managing_tab') === 'true')
+  // Managing is hidden until it's turned on in Settings
+  const [showManaging, setShowManaging] = useState(() => localStorage.getItem('show_managing_tab') === 'true')
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session))
@@ -49,10 +50,10 @@ export default function App() {
   const email = session.user.email || ''
   const go = key => { setTab(key); setGoalsFeedbackId(null) }
 
-  function toggleManaging(hide) {
-    if (hide) localStorage.setItem('hide_managing_tab', 'true')
-    else localStorage.removeItem('hide_managing_tab')
-    setHideManaging(hide)
+  function toggleManaging(show) {
+    if (show) localStorage.setItem('show_managing_tab', 'true')
+    else localStorage.removeItem('show_managing_tab')
+    setShowManaging(show)
   }
 
   return (
@@ -60,7 +61,7 @@ export default function App() {
       <nav aria-label="Primary" className="app-rail" style={s.rail}>
         <div className="rail-logo" style={s.logo} aria-hidden="true">R</div>
         {NAV.map(n => <RailItem key={n.key} item={n} active={tab === n.key} onClick={() => go(n.key)} />)}
-        {!hideManaging && (
+        {showManaging && (
           <>
             <span aria-hidden="true" className="rail-divider" style={s.divider} />
             <RailItem item={MANAGING} active={tab === 'managing'} onClick={() => go('managing')} />
@@ -76,8 +77,8 @@ export default function App() {
         {tab === 'peers'      && <PeerFeedback userId={userId} />}
         {tab === 'goals'      && <Goals key={goalsFeedbackId || 'goals'} userId={userId} initialFeedbackId={goalsFeedbackId} />}
         {tab === 'feedback'   && <ManagerFeedback userId={userId} onSuggestGoals={id => { setGoalsFeedbackId(id); setTab('goals') }} />}
-        {tab === 'managing'   && !hideManaging && <Managing userId={userId} />}
-        {tab === 'settings'   && <Settings email={email} onLogout={handleLogout} hideManaging={hideManaging} onHideManagingChange={toggleManaging} />}
+        {tab === 'managing'   && showManaging && <Managing userId={userId} />}
+        {tab === 'settings'   && <Settings email={email} onLogout={handleLogout} showManaging={showManaging} onShowManagingChange={toggleManaging} />}
       </main>
     </div>
   )
