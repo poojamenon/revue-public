@@ -512,7 +512,7 @@ export default function Managing({ userId }) {
   )
 }
 
-// 'Draft review summary' and its popover for picking which review period to summarise
+// 'View summary' and its popover for picking which review period to draft or view
 function SummaryMenu({ periods, busy, onDraft, onView }) {
   const [open, setOpen] = useState(false)
   // Defaults to the last finished period, the one a review is written about
@@ -539,7 +539,7 @@ function SummaryMenu({ periods, busy, onDraft, onView }) {
       <button ref={buttonRef} type="button" onClick={() => setOpen(v => !v)} disabled={busy} aria-haspopup="dialog" aria-expanded={open}
         style={{ ...s.darkBtn, ...s.tallBtn, ...(busy ? s.disabled : {}) }}>
         <Icon size={16} stroke={t.bright} d="M11 3l1.8 4.7 4.7 1.8-4.7 1.8L11 16l-1.8-4.7L4.5 9.5l4.7-1.8z" />
-        {busy ? 'Drafting…' : 'Draft review summary'}
+        {busy ? 'Drafting…' : 'View summary'}
       </button>
       {open && (
         <div role="dialog" aria-labelledby="summary-period-h" className="popover" onKeyDown={e => e.key === 'Escape' && close()} style={s.popover}>
