@@ -74,6 +74,8 @@ create table reportees (
   user_id uuid not null default auth.uid() references auth.users on delete cascade,
   name text not null,
   role text,
+  -- When they started reporting to you
+  joined_on date,
   created_at timestamptz default now()
 );
 

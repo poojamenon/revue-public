@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { t, layout } from '../lib/theme'
-import { toIso, formatDayMonth } from '../lib/weeks'
+import { toIso, parseIso, formatDayMonth } from '../lib/weeks'
 import { canonicalizeNames } from '../lib/colleagues'
 import { callClaude } from '../lib/claude'
 import { REVIEW_SUMMARY_SYSTEM, reviewSummaryPrompt } from '../lib/prompts'
@@ -23,7 +23,7 @@ const FILTERS = [
 const nameKey = n => n.trim().replace(/\s+/g, ' ').toLowerCase()
 const initials = name => name.trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase()
 const dayMonth = ts => formatDayMonth(toIso(new Date(ts)))
-const monthYear = ts => new Date(ts).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })
+const monthYear = date => date.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })
 
 export default function Managing({ userId }) {
   const [reportees, setReportees] = useState([])
@@ -38,9 +38,12 @@ export default function Managing({ userId }) {
   const [saidBy, setSaidBy] = useState([])
   const [query, setQuery] = useState('')
   const [saving, setSaving] = useState(false)
-  const [adding, setAdding] = useState(false)
-  const [newName, setNewName] = useState('')
-  const [newRole, setNewRole] = useState('')
+  // The note being edited: { id, type, content, saidBy, query }
+  const [editing, setEditing] = useState(null)
+  const [savingEdit, setSavingEdit] = useState(false)
+  // The reportee form: { name, role, joined } to add someone, plus their id when editing them
+  const [form, setForm] = useState(null)
+  const adding = !!form && !form.id
   // Review summaries aren't saved: they stay while the tab is open
   const [drafts, setDrafts] = useState({})
   const [drafting, setDrafting] = useState(false)
@@ -81,10 +84,8 @@ export default function Managing({ userId }) {
     ...pastNames.map(name => ({ name, tag: 'Added by you' })),
     ...team.filter(r => !known.has(nameKey(r.name))).map(r => ({ name: r.name, tag: 'Your team' })),
   ]
-  const q = nameKey(query)
-  const tagged = new Set(saidBy.map(nameKey))
-  const suggestions = q ? pool.filter(p => !tagged.has(nameKey(p.name)) && nameKey(p.name).includes(q)).slice(0, 5) : []
-  const exact = q && (pool.some(p => nameKey(p.name) === q) || tagged.has(q))
+  // A name typed but not yet picked still counts
+  const withPending = (names, pending) => canonicalizeNames(pending.trim() ? [...names, pending] : names, pool.map(p => p.name))
 
   function pick(id) {
     setSelectedId(id)
@@ -92,39 +93,25 @@ export default function Managing({ userId }) {
     setNoteText('')
     setSaidBy([])
     setQuery('')
+    setEditing(null)
+    setForm(f => f?.id ? null : f)
     setCopied(false)
     setError('')
   }
 
-  function addTag(name) {
-    const clean = name.trim().replace(/\s+/g, ' ')
-    if (clean) setSaidBy(prev => canonicalizeNames([...prev, clean], [...colleagueNames, ...pastNames, ...team.map(r => r.name)]))
-    setQuery('')
-  }
-
-  function onTagKey(e) {
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      if (suggestions.length) addTag(suggestions[0].name)
-      else if (q) addTag(query)
-    } else if (e.key === 'Backspace' && !query && saidBy.length) {
-      setSaidBy(saidBy.slice(0, -1))
-    } else if (e.key === 'Escape') {
-      setQuery('')
-    }
-  }
-
-  async function addReportee(e) {
+  async function saveReportee(e) {
     e.preventDefault()
-    const name = newName.trim().replace(/\s+/g, ' ')
+    const name = form.name.trim().replace(/\s+/g, ' ')
     if (!name) return
     setError('')
-    const { data, error: saveError } = await supabase.from('reportees').insert({ user_id: userId, name, role: newRole.trim() || null }).select().single()
-    if (saveError) { setError(`Couldn't add ${name}: ${saveError.message}`); return }
+    const fields = { name, role: form.role.trim() || null, joined_on: form.joined || null }
+    const { data, error: saveError } = form.id
+      ? await supabase.from('reportees').update(fields).eq('id', form.id).select().single()
+      : await supabase.from('reportees').insert({ user_id: userId, ...fields }).select().single()
+    if (saveError) { setError(`Couldn't save ${name}: ${saveError.message}`); return }
+    setForm(null)
+    if (form.id) { setReportees(prev => prev.map(r => r.id === data.id ? data : r)); return }
     setReportees(prev => [...prev, data])
-    setAdding(false)
-    setNewName('')
-    setNewRole('')
     pick(data.id)
   }
 
@@ -140,8 +127,7 @@ export default function Managing({ userId }) {
   async function saveNote() {
     const content = noteText.trim()
     if (!content || saving) return
-    // A name typed but not yet picked still counts
-    const people = noteType === 'others' ? canonicalizeNames(q ? [...saidBy, query] : saidBy) : []
+    const people = noteType === 'others' ? withPending(saidBy, query) : []
     setSaving(true)
     setError('')
     const { data, error: saveError } = await supabase.from('reportee_notes')
@@ -155,11 +141,30 @@ export default function Managing({ userId }) {
     setFilter('all')
   }
 
+  function startEdit(n) {
+    setEditing({ id: n.id, type: n.type, content: n.content, saidBy: n.said_by || [], query: '' })
+  }
+
+  async function saveEdit() {
+    const content = editing.content.trim()
+    if (!content || savingEdit) return
+    const said_by = editing.type === 'others' ? withPending(editing.saidBy, editing.query) : []
+    setSavingEdit(true)
+    setError('')
+    const { data, error: saveError } = await supabase.from('reportee_notes')
+      .update({ type: editing.type, content, said_by }).eq('id', editing.id).select().single()
+    setSavingEdit(false)
+    if (saveError) { setError(`Couldn't save the note: ${saveError.message}`); return }
+    setNotes(prev => prev.map(n => n.id === data.id ? data : n))
+    setEditing(null)
+  }
+
   async function deleteNote(id) {
     if (!confirm('Delete this note?')) return
     const { error: delError } = await supabase.from('reportee_notes').delete().eq('id', id)
     if (delError) { setError(`Couldn't delete the note: ${delError.message}`); return }
     setNotes(prev => prev.filter(n => n.id !== id))
+    if (editing?.id === id) setEditing(null)
   }
 
   async function draftSummary() {
@@ -187,16 +192,20 @@ export default function Managing({ userId }) {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const addForm = (
-    <form onSubmit={addReportee} style={s.addForm}>
-      <span style={s.addTitle}>New reportee</span>
+  const reporteeForm = form && (
+    <form onSubmit={saveReportee} style={s.addForm}>
+      <span style={s.addTitle}>{form.id ? 'Edit reportee' : 'New reportee'}</span>
       <label htmlFor="reportee-name" style={s.srOnly}>Name</label>
-      <input id="reportee-name" type="text" autoFocus placeholder="Full name" value={newName} onChange={e => setNewName(e.target.value)} style={s.input} />
+      <input id="reportee-name" type="text" autoFocus placeholder="Full name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} style={s.input} />
       <label htmlFor="reportee-role" style={s.srOnly}>Role</label>
-      <input id="reportee-role" type="text" placeholder="Role, e.g. Product Designer" value={newRole} onChange={e => setNewRole(e.target.value)} style={s.input} />
+      <input id="reportee-role" type="text" placeholder="Role, e.g. Product Designer" value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} style={s.input} />
+      <div style={s.field}>
+        <label htmlFor="reportee-joined" style={s.smallLabel}>Reports to you since</label>
+        <input id="reportee-joined" type="date" max={toIso(new Date())} value={form.joined} onChange={e => setForm({ ...form, joined: e.target.value })} style={s.input} />
+      </div>
       <div style={s.addActions}>
-        <button type="button" onClick={() => setAdding(false)} style={s.cancelBtn}>Cancel</button>
-        <button type="submit" disabled={!newName.trim()} style={{ ...s.darkBtn, ...(newName.trim() ? {} : s.disabled) }}>Add</button>
+        <button type="button" onClick={() => setForm(null)} style={s.cancelBtn}>Cancel</button>
+        <button type="submit" disabled={!form.name.trim()} style={{ ...s.darkBtn, ...(form.name.trim() ? {} : s.disabled) }}>{form.id ? 'Save' : 'Add'}</button>
       </div>
     </form>
   )
@@ -209,16 +218,17 @@ export default function Managing({ userId }) {
             <span style={s.eyebrow}>Your team · {reportees.length} {reportees.length === 1 ? 'reportee' : 'reportees'}</span>
             <h1 style={s.h1}>Managing</h1>
           </div>
-          <button type="button" onClick={() => setAdding(v => !v)} aria-expanded={adding} style={s.primaryBtn}>
+          <button type="button" onClick={() => setForm(adding ? null : { name: '', role: '', joined: '' })} aria-expanded={adding} style={s.primaryBtn}>
             <Icon size={16} strokeWidth={2} d="M12 5v14M5 12h14" />Add reportee
           </button>
         </header>
 
         {loadError && <p role="alert" style={s.error}>{loadError}</p>}
+        {!current && error && <p role="alert" style={s.error}>{error}</p>}
 
         {!current ? (
           <div style={s.emptyTeam}>
-            {adding ? addForm : (
+            {adding ? reporteeForm : (
               <>
                 <span style={s.emptyTitle}>No one on your team yet</span>
                 <span style={s.emptyText}>Add the people who report to you, then capture wins, feedback you've given and things others mention as they happen — review time gets much easier.</span>
@@ -228,7 +238,7 @@ export default function Managing({ userId }) {
         ) : (
           <div style={s.columns}>
             <aside aria-label="Reportees" style={s.aside}>
-              {adding && addForm}
+              {form && reporteeForm}
               {reportees.map(r => {
                 const on = r.id === current.id
                 const theirs = notes.filter(n => n.reportee_id === r.id)
@@ -252,13 +262,20 @@ export default function Managing({ userId }) {
                   <span aria-hidden="true" style={s.bigAvatar}>{initials(current.name)}</span>
                   <div style={s.personHeadText}>
                     <h2 id="person-h" style={s.h2}>{current.name}</h2>
-                    <span style={s.muted}>{current.role ? `${current.role} · ` : ''}Added {monthYear(current.created_at)}</span>
+                    <span style={s.muted}>
+                      {current.role ? `${current.role} · ` : ''}
+                      {current.joined_on ? `Reports to you since ${monthYear(parseIso(current.joined_on))}` : `Added ${monthYear(new Date(current.created_at))}`}
+                    </span>
                   </div>
                 </div>
                 <div style={s.personActions}>
                   <button type="button" onClick={draftSummary} disabled={drafting} style={{ ...s.darkBtn, ...s.tallBtn, ...(drafting ? s.disabled : {}) }}>
                     <Icon size={16} stroke={t.bright} d="M11 3l1.8 4.7 4.7 1.8-4.7 1.8L11 16l-1.8-4.7L4.5 9.5l4.7-1.8z" />
                     {drafting ? 'Drafting…' : drafts[current.id] ? 'Redraft review summary' : 'Draft review summary'}
+                  </button>
+                  <button type="button" className="icon-btn" onClick={() => setForm({ id: current.id, name: current.name, role: current.role || '', joined: current.joined_on || '' })}
+                    aria-label={`Edit ${current.name}`} title="Edit" aria-expanded={form?.id === current.id} style={s.iconBtn}>
+                    <Icon size={16} d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16zM13.5 6.5l4 4" />
                   </button>
                   <button type="button" className="icon-btn" onClick={removeReportee} aria-label={`Remove ${current.name}`} title="Remove" style={s.iconBtn}>
                     <Icon size={16} d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
@@ -296,60 +313,11 @@ export default function Managing({ userId }) {
               <div style={s.composer}>
                 <div style={s.composerHead}>
                   <h3 style={s.h3}>Add to {first}'s log</h3>
-                  <div role="radiogroup" aria-label="Note type" style={s.types}>
-                    {Object.entries(TYPES).map(([key, type]) => {
-                      const on = key === noteType
-                      return (
-                        <button key={key} type="button" role="radio" aria-checked={on} onClick={() => setNoteType(key)}
-                          style={{ ...s.typeBtn, ...(on ? { border: `1.5px solid ${type.fg}`, background: type.bg, color: type.fg } : {}) }}>
-                          {type.label}
-                        </button>
-                      )
-                    })}
-                  </div>
+                  <TypePicker value={noteType} onChange={setNoteType} />
                 </div>
 
                 {noteType === 'others' && (
-                  <div style={s.field}>
-                    <div style={s.fieldHead}>
-                      <label htmlFor="said-by" style={s.smallLabel}>Who said it?</label>
-                      <span style={s.hint}>Tag one or more people</span>
-                    </div>
-                    <div style={s.relative}>
-                      <div className="tag-box" style={{ ...s.tagBox, ...(q ? { border: `1.5px solid ${TYPES.others.fg}` } : {}) }}>
-                        {saidBy.map(name => (
-                          <span key={name} style={s.tag}>
-                            <span aria-hidden="true" style={s.tagAvatar}>{initials(name)}</span>
-                            <span>{name}</span>
-                            <button type="button" aria-label={`Remove ${name}`} onClick={() => setSaidBy(saidBy.filter(n => n !== name))} style={s.tagRemove}>
-                              <Icon size={12} strokeWidth={2.4} d="M6 6l12 12M18 6L6 18" />
-                            </button>
-                          </span>
-                        ))}
-                        <input id="said-by" className="tag-input" type="text" autoComplete="off" role="combobox" aria-expanded={!!q} aria-controls="said-by-suggestions"
-                          placeholder={saidBy.length ? 'Add another person…' : 'Type a name, e.g. Ravi'}
-                          value={query} onChange={e => setQuery(e.target.value)} onKeyDown={onTagKey} style={s.tagInput} />
-                      </div>
-                      {q && (
-                        <div id="said-by-suggestions" role="listbox" aria-label="People" style={s.suggestions}>
-                          {suggestions.map((p, i) => (
-                            <button key={p.name} type="button" role="option" aria-selected={i === 0} onClick={() => addTag(p.name)}
-                              style={{ ...s.suggestion, ...(i === 0 ? { background: t.field } : {}) }}>
-                              <span aria-hidden="true" style={s.suggestionAvatar}>{initials(p.name)}</span>
-                              <span style={s.suggestionName}>{p.name}</span>
-                              {p.tag && <span style={s.suggestionTag}>{p.tag}</span>}
-                            </button>
-                          ))}
-                          {!exact && (
-                            <button type="button" onClick={() => addTag(query)} style={{ ...s.customBtn, ...(suggestions.length ? { borderTop: `1px solid ${t.borderSoft}` } : {}) }}>
-                              <span aria-hidden="true" style={s.customPlus}>+</span>
-                              Tag “{query.trim()}” as someone new
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  <SaidByField id="said-by" value={saidBy} onChange={setSaidBy} query={query} onQueryChange={setQuery} pool={pool} />
                 )}
 
                 <label htmlFor="note" style={s.srOnly}>Note</label>
@@ -365,6 +333,31 @@ export default function Managing({ userId }) {
                 <h3 style={s.listTitle}>{filter === 'all' ? 'Log' : filterLabel} · newest first</h3>
                 {shown.length ? shown.map(n => {
                   const type = TYPES[n.type] || TYPES.mine
+                  if (editing?.id === n.id) {
+                    const edit = patch => setEditing(prev => ({ ...prev, ...patch }))
+                    const canSave = editing.content.trim() && !savingEdit
+                    return (
+                      <article key={n.id} aria-label="Edit note" style={{ ...s.note, ...s.noteEditing }}>
+                        <div style={s.composerHead}>
+                          <span style={s.muted13}>Added {dayMonth(n.created_at)}</span>
+                          <TypePicker value={editing.type} onChange={type => edit({ type })} />
+                        </div>
+                        {editing.type === 'others' && (
+                          <SaidByField id={`said-by-${n.id}`} value={editing.saidBy} onChange={saidBy => edit({ saidBy })}
+                            query={editing.query} onQueryChange={query => edit({ query })} pool={pool} />
+                        )}
+                        <label htmlFor={`note-${n.id}`} style={s.srOnly}>Note</label>
+                        <textarea id={`note-${n.id}`} rows={3} autoFocus value={editing.content} onChange={e => edit({ content: e.target.value })}
+                          onKeyDown={e => e.key === 'Escape' && setEditing(null)} style={s.textarea} />
+                        <div style={s.editActions}>
+                          <button type="button" onClick={() => setEditing(null)} style={s.cancelBtn}>Cancel</button>
+                          <button type="button" onClick={saveEdit} disabled={!canSave} style={{ ...s.darkBtn, ...(canSave ? {} : s.disabled) }}>
+                            {savingEdit ? 'Saving…' : 'Save changes'}
+                          </button>
+                        </div>
+                      </article>
+                    )
+                  }
                   return (
                     <article key={n.id} className="entry-card" style={s.note}>
                       <div style={s.noteHead}>
@@ -382,9 +375,14 @@ export default function Managing({ userId }) {
                             </>
                           )}
                         </div>
-                        <button type="button" className="icon-btn" onClick={() => deleteNote(n.id)} aria-label="Delete note" title="Delete" style={s.smallIconBtn}>
-                          <Icon size={14} d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
-                        </button>
+                        <div style={s.noteActions}>
+                          <button type="button" className="icon-btn" onClick={() => startEdit(n)} aria-label="Edit note" title="Edit" style={s.smallIconBtn}>
+                            <Icon size={14} d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16zM13.5 6.5l4 4" />
+                          </button>
+                          <button type="button" className="icon-btn" onClick={() => deleteNote(n.id)} aria-label="Delete note" title="Delete" style={s.smallIconBtn}>
+                            <Icon size={14} d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
+                          </button>
+                        </div>
                       </div>
                       <p style={s.noteText}>{n.content}</p>
                     </article>
@@ -397,6 +395,93 @@ export default function Managing({ userId }) {
                 )}
               </div>
             </section>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function TypePicker({ value, onChange }) {
+  return (
+    <div role="radiogroup" aria-label="Note type" style={s.types}>
+      {Object.entries(TYPES).map(([key, type]) => {
+        const on = key === value
+        return (
+          <button key={key} type="button" role="radio" aria-checked={on} onClick={() => onChange(key)}
+            style={{ ...s.typeBtn, ...(on ? { border: `1.5px solid ${type.fg}`, background: type.bg, color: type.fg } : {}) }}>
+            {type.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+// Tag the people who said something, picking from `pool` ({ name, tag }) or adding someone new.
+// The parent owns the typed `query` so a name typed but not picked can still be saved.
+function SaidByField({ id, value, onChange, query, onQueryChange, pool }) {
+  const q = nameKey(query)
+  const tagged = new Set(value.map(nameKey))
+  const suggestions = q ? pool.filter(p => !tagged.has(nameKey(p.name)) && nameKey(p.name).includes(q)).slice(0, 5) : []
+  const exact = q && (pool.some(p => nameKey(p.name) === q) || tagged.has(q))
+
+  function addTag(name) {
+    const clean = name.trim().replace(/\s+/g, ' ')
+    if (clean) onChange(canonicalizeNames([...value, clean], pool.map(p => p.name)))
+    onQueryChange('')
+  }
+
+  function onKeyDown(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      if (suggestions.length) addTag(suggestions[0].name)
+      else if (q) addTag(query)
+    } else if (e.key === 'Backspace' && !query && value.length) {
+      onChange(value.slice(0, -1))
+    } else if (e.key === 'Escape' && query) {
+      e.stopPropagation()
+      onQueryChange('')
+    }
+  }
+
+  return (
+    <div style={s.field}>
+      <div style={s.fieldHead}>
+        <label htmlFor={id} style={s.smallLabel}>Who said it?</label>
+        <span style={s.hint}>Tag one or more people</span>
+      </div>
+      <div style={s.relative}>
+        <div className="tag-box" style={{ ...s.tagBox, ...(q ? { border: `1.5px solid ${TYPES.others.fg}` } : {}) }}>
+          {value.map(name => (
+            <span key={name} style={s.tag}>
+              <span aria-hidden="true" style={s.tagAvatar}>{initials(name)}</span>
+              <span>{name}</span>
+              <button type="button" aria-label={`Remove ${name}`} onClick={() => onChange(value.filter(n => n !== name))} style={s.tagRemove}>
+                <Icon size={12} strokeWidth={2.4} d="M6 6l12 12M18 6L6 18" />
+              </button>
+            </span>
+          ))}
+          <input id={id} className="tag-input" type="text" autoComplete="off" role="combobox" aria-expanded={!!q} aria-controls={`${id}-suggestions`}
+            placeholder={value.length ? 'Add another person…' : 'Type a name, e.g. Ravi'}
+            value={query} onChange={e => onQueryChange(e.target.value)} onKeyDown={onKeyDown} style={s.tagInput} />
+        </div>
+        {q && (
+          <div id={`${id}-suggestions`} role="listbox" aria-label="People" style={s.suggestions}>
+            {suggestions.map((p, i) => (
+              <button key={p.name} type="button" role="option" aria-selected={i === 0} onClick={() => addTag(p.name)}
+                style={{ ...s.suggestion, ...(i === 0 ? { background: t.field } : {}) }}>
+                <span aria-hidden="true" style={s.suggestionAvatar}>{initials(p.name)}</span>
+                <span style={s.suggestionName}>{p.name}</span>
+                {p.tag && <span style={s.suggestionTag}>{p.tag}</span>}
+              </button>
+            ))}
+            {!exact && (
+              <button type="button" onClick={() => addTag(query)} style={{ ...s.customBtn, ...(suggestions.length ? { borderTop: `1px solid ${t.borderSoft}` } : {}) }}>
+                <span aria-hidden="true" style={s.customPlus}>+</span>
+                Tag “{query.trim()}” as someone new
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -494,6 +579,9 @@ const s = {
   list: { display: 'flex', flexDirection: 'column', gap: 10 },
   listTitle: { margin: 0, fontFamily: t.fontMono, fontSize: 12, fontWeight: 500, letterSpacing: '0.06em', textTransform: 'uppercase', color: t.muted },
   note: { margin: 0, background: t.white, border: `1px solid ${t.border}`, borderRadius: 16, padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 10 },
+  noteEditing: { border: `2px solid ${t.accent}`, padding: '15px 17px', gap: 14 },
+  noteActions: { display: 'flex', gap: 2, flexShrink: 0 },
+  editActions: { display: 'flex', justifyContent: 'flex-end', gap: 8 },
   noteHead: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 },
   noteMeta: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
   pill: { display: 'inline-flex', alignItems: 'center', height: 26, padding: '0 10px', borderRadius: 999, fontSize: 12, fontWeight: 600 },
