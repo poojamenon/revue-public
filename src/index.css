@@ -39,7 +39,7 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible, [role="tab"]:fo
   outline: 2px solid #A8463F;
   outline-offset: 2px;
 }
-.app-rail button:focus-visible { outline-color: #D9B44A; }
+.app-rail button:focus-visible, .app-rail a:focus-visible { outline-color: #D9B44A; }
 
 select option {
   padding: 8px;
