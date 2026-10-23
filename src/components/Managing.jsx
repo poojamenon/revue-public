@@ -4,7 +4,7 @@ import { t, layout } from '../lib/theme'
 import { toIso, parseIso, formatDayMonth } from '../lib/weeks'
 import { canonicalizeNames } from '../lib/colleagues'
 import { callClaude } from '../lib/claude'
-import { reviewCycle, cyclesSince, formatCycle } from '../lib/cycles'
+import { currentCycle, reviewCycle, formatCycle } from '../lib/cycles'
 import { REVIEW_SUMMARY_SYSTEM, reviewSummaryPrompt } from '../lib/prompts'
 
 const TYPES = {
@@ -86,12 +86,10 @@ export default function Managing({ userId }) {
     ...pastNames.map(name => ({ name, tag: 'Added by you' })),
     ...team.filter(r => !known.has(nameKey(r.name))).map(r => ({ name: r.name, tag: 'Your team' })),
   ]
-  // Review periods to summarise, back to the earliest note or joining date
-  const earliest = [...currentNotes.map(noteDay), current?.joined_on].filter(Boolean).sort()[0]
-  const thisPeriod = cyclesSince(earliest)[0].start
-  const periods = cyclesSince(earliest).map(c => ({
+  // Review periods to summarise: the current one and the last finished one
+  const periods = [currentCycle(), reviewCycle()].map((c, i) => ({
     ...c,
-    inProgress: c.start === thisPeriod,
+    inProgress: i === 0,
     count: currentNotes.filter(n => noteDay(n) >= c.start && noteDay(n) < c.end).length,
   }))
 
