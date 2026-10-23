@@ -34,6 +34,7 @@ export default function Managing({ userId }) {
   const [colleagueNames, setColleagueNames] = useState([])
   const [loadError, setLoadError] = useState('')
   const [selectedId, setSelectedId] = useState(null)
+  const [teamSearch, setTeamSearch] = useState('')
   const [filter, setFilter] = useState('all')
   const [noteType, setNoteType] = useState('mine')
   const [noteText, setNoteText] = useState('')
@@ -71,6 +72,8 @@ export default function Managing({ userId }) {
 
   const current = reportees.find(r => r.id === selectedId) || reportees[0] || null
   const first = current?.name.split(/\s+/)[0] || ''
+  const teamQuery = teamSearch.trim().toLowerCase()
+  const listed = teamQuery ? reportees.filter(r => `${r.name} ${r.role || ''}`.toLowerCase().includes(teamQuery)) : reportees
   const currentNotes = current ? notes.filter(n => n.reportee_id === current.id) : []
   const counts = { all: currentNotes.length, mine: 0, others: 0, win: 0, improve: 0 }
   currentNotes.forEach(n => { if (n.type in counts) counts[n.type]++ })
@@ -249,7 +252,14 @@ export default function Managing({ userId }) {
           <div style={s.columns}>
             <aside aria-label="Reportees" style={s.aside}>
               {form && reporteeForm}
-              {reportees.map(r => {
+              <div style={s.searchWrap}>
+                <span style={s.searchIcon}><Icon size={16} d="M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14zM20 20l-4-4" /></span>
+                <label htmlFor="team-search" style={s.srOnly}>Search your team</label>
+                <input id="team-search" type="search" value={teamSearch} onChange={e => setTeamSearch(e.target.value)}
+                  placeholder="Search by name or role" style={s.search} />
+              </div>
+              {teamQuery && !listed.length && <p style={s.noMatch}>No one matches “{teamSearch.trim()}”.</p>}
+              {listed.map(r => {
                 const on = r.id === current.id
                 const theirs = notes.filter(n => n.reportee_id === r.id)
                 return (
@@ -592,6 +602,10 @@ const s = {
   addTitle: { fontSize: 14, fontWeight: 600 },
   input: { ...control, height: 42, padding: '0 12px' },
   addActions: { display: 'flex', gap: 8, justifyContent: 'flex-end' },
+  searchWrap: { position: 'relative', display: 'flex', alignItems: 'center' },
+  searchIcon: { position: 'absolute', left: 12, display: 'flex', color: t.muted, pointerEvents: 'none' },
+  search: { ...control, width: '100%', height: 44, background: t.white, padding: '0 12px 0 36px' },
+  noMatch: { margin: 0, padding: '4px 2px', fontSize: 14, color: t.muted },
   personRow: { textAlign: 'left', padding: 14, borderRadius: 16, border: `1px solid ${t.border}`, background: t.white, color: t.text, display: 'flex', alignItems: 'center', gap: 12 },
   personRowOn: { border: `2px solid ${t.accent}`, padding: 13, background: t.accentSoft },
   avatar: { flex: '0 0 auto', width: 40, height: 40, borderRadius: '50%', background: t.avatar, color: t.dark, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 600 },
