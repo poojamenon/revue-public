@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Your Supabase keys: keep them out of git (.env.example is the template)
+.env
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
